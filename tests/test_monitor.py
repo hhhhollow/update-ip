@@ -7,86 +7,103 @@ from update_ip.config import Settings
 from update_ip.monitor import IPMonitor
 
 
+DOMESTIC_URL = "https://mock.ip/domestic"
+FOREIGN_URL = "https://mock.ip/foreign"
+
+
+def make_settings(cache_file: Path, bark_key="dummy_key", notify_on_start=True) -> Settings:
+    return Settings(
+        bark_key=bark_key,
+        cache_file=cache_file,
+        domestic_ip_providers=[DOMESTIC_URL],
+        ip_providers=[FOREIGN_URL],
+        notify_on_start=notify_on_start,
+        max_retries_per_provider=1,
+    )
+
+
 @pytest.mark.asyncio
 async def test_monitor_startup_first_run(tmp_path: Path):
     cache_file = tmp_path / "cache.json"
-    settings = Settings(
-        bark_key="dummy_key",
-        cache_file=cache_file,
-        ip_providers=["https://mock.ip/current"],
-        notify_on_start=True,
-    )
-    monitor = IPMonitor(settings)
+    monitor = IPMonitor(make_settings(cache_file))
 
     with respx.mock(assert_all_called=True) as respx_mock:
-        respx_mock.get("https://mock.ip/current").respond(200, text="123.123.123.123")
+        respx_mock.get(DOMESTIC_URL).respond(200, text="100.64.0.10")
+        respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.20")
         respx_mock.post("https://api.day.app/push").respond(200, json={"code": 200, "message": "success"})
-        changed, cur_ip, prev_ip = await monitor.check_once(is_startup=True)
+        results = await monitor.check_once(is_startup=True)
 
-    assert changed is False
-    assert cur_ip == "123.123.123.123"
-    assert prev_ip is None
-    assert monitor.state.get_last_ip() == "123.123.123.123"
+    assert results["domestic"]["initialized"] is True
+    assert results["foreign"]["initialized"] is True
+    assert monitor.state.get_last_ip("domestic") == "100.64.0.10"
+    assert monitor.state.get_last_ip("foreign") == "203.0.113.20"
 
 
 @pytest.mark.asyncio
-async def test_monitor_regular_check_changed(tmp_path: Path):
+async def test_foreign_change_is_tracked_independently(tmp_path: Path):
     cache_file = tmp_path / "cache.json"
-    settings = Settings(
-        bark_key="dummy_key",
-        cache_file=cache_file,
-        ip_providers=["https://mock.ip/current"],
-    )
-    monitor = IPMonitor(settings)
-    monitor.state.save_ip("123.123.123.123")
+    monitor = IPMonitor(make_settings(cache_file))
+    monitor.state.save_ip("100.64.0.10", scope="domestic")
+    monitor.state.save_ip("203.0.113.20", scope="foreign")
 
     with respx.mock(assert_all_called=True) as respx_mock:
-        respx_mock.get("https://mock.ip/current").respond(200, text="123.123.123.200")
+        respx_mock.get(DOMESTIC_URL).respond(200, text="100.64.0.10")
+        respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.21")
         respx_mock.post("https://api.day.app/push").respond(200, json={"code": 200, "message": "success"})
-        changed, cur_ip, prev_ip = await monitor.check_once(is_startup=False)
+        results = await monitor.check_once(is_startup=False)
 
-    assert changed is True
-    assert cur_ip == "123.123.123.200"
-    assert prev_ip == "123.123.123.123"
-    assert monitor.state.get_last_ip() == "123.123.123.200"
+    assert results["domestic"]["changed"] is False
+    assert results["foreign"]["changed"] is True
+    assert monitor.state.get_last_ip("domestic") == "100.64.0.10"
+    assert monitor.state.get_last_ip("foreign") == "203.0.113.21"
 
 
 @pytest.mark.asyncio
-async def test_failed_bark_delivery_does_not_advance_state(tmp_path: Path):
+async def test_failed_bark_delivery_does_not_advance_changed_channel(tmp_path: Path):
     cache_file = tmp_path / "cache.json"
-    settings = Settings(
-        bark_key="dummy_key",
-        cache_file=cache_file,
-        ip_providers=["https://mock.ip/current"],
-    )
-    monitor = IPMonitor(settings)
-    monitor.state.save_ip("123.123.123.123")
+    monitor = IPMonitor(make_settings(cache_file))
+    monitor.state.save_ip("100.64.0.10", scope="domestic")
+    monitor.state.save_ip("203.0.113.20", scope="foreign")
 
     with respx.mock(assert_all_called=True) as respx_mock:
-        respx_mock.get("https://mock.ip/current").respond(200, text="123.123.123.200")
+        respx_mock.get(DOMESTIC_URL).respond(200, text="100.64.0.10")
+        respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.21")
         respx_mock.post("https://api.day.app/push").respond(500, text="temporary failure")
-        changed, cur_ip, prev_ip = await monitor.check_once(is_startup=False)
+        results = await monitor.check_once(is_startup=False)
 
-    assert changed is True
-    assert cur_ip == "123.123.123.200"
-    assert prev_ip == "123.123.123.123"
-    assert monitor.state.get_last_ip() == "123.123.123.123"
+    assert results["foreign"]["changed"] is True
+    assert results["foreign"]["state_advanced"] is False
+    assert monitor.state.get_last_ip("foreign") == "203.0.113.20"
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_bark_does_not_block_state_update(tmp_path: Path):
+async def test_unconfigured_bark_does_not_block_state_updates(tmp_path: Path):
     cache_file = tmp_path / "cache.json"
-    settings = Settings(
-        bark_key=None,
-        cache_file=cache_file,
-        ip_providers=["https://mock.ip/current"],
-    )
-    monitor = IPMonitor(settings)
-    monitor.state.save_ip("123.123.123.123")
+    monitor = IPMonitor(make_settings(cache_file, bark_key=None))
+    monitor.state.save_ip("100.64.0.10", scope="domestic")
+    monitor.state.save_ip("203.0.113.20", scope="foreign")
 
     with respx.mock(assert_all_called=True) as respx_mock:
-        respx_mock.get("https://mock.ip/current").respond(200, text="123.123.123.200")
-        changed, _, _ = await monitor.check_once(is_startup=False)
+        respx_mock.get(DOMESTIC_URL).respond(200, text="100.64.0.11")
+        respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.21")
+        results = await monitor.check_once(is_startup=False)
 
-    assert changed is True
-    assert monitor.state.get_last_ip() == "123.123.123.200"
+    assert results["domestic"]["changed"] is True
+    assert results["foreign"]["changed"] is True
+    assert monitor.state.get_last_ip("domestic") == "100.64.0.11"
+    assert monitor.state.get_last_ip("foreign") == "203.0.113.21"
+
+
+@pytest.mark.asyncio
+async def test_one_channel_failure_does_not_block_the_other(tmp_path: Path):
+    cache_file = tmp_path / "cache.json"
+    monitor = IPMonitor(make_settings(cache_file, bark_key=None))
+
+    with respx.mock(assert_all_called=True) as respx_mock:
+        respx_mock.get(DOMESTIC_URL).respond(503)
+        respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.20")
+        results = await monitor.check_once(is_startup=False)
+
+    assert results["domestic"]["error"] is not None
+    assert results["foreign"]["ip"] == "203.0.113.20"
+    assert monitor.state.get_last_ip("foreign") == "203.0.113.20"
