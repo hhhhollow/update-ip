@@ -1,126 +1,98 @@
 # 🌐 IP 变动监控与 Bark 实时推送
 
-一个基于 **Python 3.13** 和 **uv** 构建的公网 IP 变动监控与 Bark 实时推送工具。
+基于 **Python 3.13** 和 **uv** 的公网 IP 变动监控工具；检测到变化后，通过 Bark 推送到 iPhone/iPad。
 
-当你的网络公网 IP 发生变动（例如宽带重新拨号、家庭宽带租期刷新、Wi-Fi/热点切换等）时，脚本会立即捕获变动并向你的 iPhone/iPad 推送 Bark 通知。
+## ✨ 特性
 
----
-
-## ✨ 核心特性
-
-- ⚡ **轻量高效**：基于 Python 3.13 异步协程 (`asyncio` + `httpx`) 构建，CPU 与内存占用极低。
-- 🛡 **多源冗余容灾**：内置 7 个知名高可用公网 IP 探测源（ipify, icanhazip, ifconfig.me, ident.me, ip.sb, cip.cc 等），单点接口故障自动无缝切换。
-- 💾 **状态智能持久化**：本地维护 `.ip_cache.json` 状态与历史变更记录，脚本重启不会误报虚假变动。
-- 🔔 **Bark 深度定制**：支持自定义 Bark 推送标题、分组（Group）、声音（Sound）、图标（Icon）、跳转链接及通知优先级（active / timeSensitive / passive）。
-- 🛠 **开箱即用 & 易于守护**：内置一键生成 macOS `launchd` 自启守护服务，开机自启且崩溃自动拉起。
-- 🧪 **完整测试套件**：配备 `pytest` + `respx` 单元测试与网络 Mock 测试。
-
----
+- **多源容灾**：多个公网 IP 探测源自动切换。
+- **指数退避重试**：单个探测源失败后不会立即高频重试。
+- **IPv4 / IPv6 控制**：默认只监控 IPv4，避免不同探测源返回不同地址族导致假变更。
+- **可靠通知**：IP 变化后如果 Bark 推送失败，不会提前提交新 IP；下一轮继续重试。
+- **敏感信息保护**：Debug 日志不会输出 Bark device key。
+- **状态持久化**：`.ip_cache.json` 保存当前 IP 与最近历史。
+- **macOS launchd**：支持登录自启和崩溃拉起。
+- **自动化测试**：`pytest` + `respx`。
 
 ## 🚀 快速开始
 
-### 1. 配置 Bark Key
-
-拷贝或直接编辑 `.env` 文件，填入你的 Bark 设备 Key：
-
 ```bash
-# 编辑 .env 文件
 cp .env.example .env
 ```
 
-在 `.env` 中填入你的 Bark 设备 Key（在 iOS Bark App 中即可复制）：
+编辑 `.env`：
 
 ```ini
-# Bark 设备 Key
 BARK_KEY=YOUR_BARK_DEVICE_KEY
-
-# 检查间隔时间（秒，默认 60 秒）
 CHECK_INTERVAL=60
-
-# 启动时是否发送一条确认通知
+IP_VERSION=4
 NOTIFY_ON_START=true
-
-# 提示音 (可选: minuet, bell, alarm, electronic, glass 等)
-BARK_SOUND=minuet
 ```
 
----
+`IP_VERSION`：
 
-### 2. 测试与运行
+- `4`：只监控 IPv4（默认）
+- `6`：只监控 IPv6
+- `any`：接受 IPv4 或 IPv6
 
-#### 诊断网络与测试 Bark 推送
+## 运行
+
 ```bash
+# 诊断 IP 源并测试 Bark
 uv run update-ip --test
-# 或者
-uv run python main.py --test
-```
 
-#### 单次运行（用于 Cron 计划任务或排查）
-```bash
+# 单次检查
 uv run update-ip --once
-```
 
-#### 查看当前缓存的 IP 与变动历史
-```bash
+# 查看缓存和历史
 uv run update-ip --status
-```
 
-#### 持续前台监控运行
-```bash
+# 持续运行
 uv run update-ip
 ```
 
----
+临时指定地址族：
 
-## 🖥️ macOS 后台自启服务（开机静默运行）
-
-本项目内置了 macOS `launchd` 服务配置生成器：
-
-### 1. 生成并安装服务
 ```bash
-uv run update-ip --generate-launchd
+uv run update-ip --ip-version 6
 ```
 
-该命令会在 `~/Library/LaunchAgents/com.update-ip.monitor.plist` 生成自启服务文件。
+## macOS 后台自启
 
-### 2. 启动服务
 ```bash
+uv run update-ip --generate-launchd
 launchctl load -w ~/Library/LaunchAgents/com.update-ip.monitor.plist
 ```
 
-### 3. 查看运行日志
+查看日志：
+
 ```bash
 tail -f logs/stdout.log
 tail -f logs/stderr.log
 ```
 
-### 4. 停止并卸载服务
+停止：
+
 ```bash
 launchctl unload -w ~/Library/LaunchAgents/com.update-ip.monitor.plist
 ```
 
----
-
-## ⚙️ 命令行参数一览
+## 常用参数
 
 | 参数 | 简写 | 描述 |
 | :--- | :--- | :--- |
-| `--key` | `-k` | 覆盖配置中的 Bark 设备 Key |
-| `--server` | `-s` | 自定义 Bark 服务器地址（默认 `https://api.day.app`） |
-| `--interval` | `-i` | 检查间隔秒数（默认 60 秒） |
-| `--config` | `-c` | 指定自定义 `.env` 配置文件路径 |
-| `--once` | | 单次检查 IP，有变动则推送并更新缓存，然后退出 |
-| `--test` | | 运行 IP 接口测试与 Bark 连通性测试 |
-| `--status` | | 查看当前缓存 IP 及历史变动表格 |
-| `--generate-launchd` | | 一键生成 macOS launchd 开机自启服务文件 |
+| `--key` | `-k` | 覆盖 Bark device key |
+| `--server` | `-s` | 自定义 Bark 服务器 |
+| `--interval` | `-i` | 检查间隔秒数，必须 >= 1 |
+| `--ip-version` | | `4` / `6` / `any` |
+| `--config` | `-c` | 指定自定义 `.env` |
+| `--once` | | 单次检查并退出 |
+| `--test` | | IP 源与 Bark 诊断 |
+| `--status` | | 查看缓存和历史 |
+| `--generate-launchd` | | 生成 macOS LaunchAgent |
 | `--no-notify-on-start` | | 启动时不发送就绪通知 |
-| `--verbose` | `-v` | 输出 Debug 级别详细日志 |
+| `--verbose` | `-v` | Debug 日志 |
 
----
-
-## 🧪 自动化测试
-
-运行完整测试套件：
+## 测试
 
 ```bash
 uv run pytest -v

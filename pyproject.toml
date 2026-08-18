@@ -1,7 +1,7 @@
 [project]
 name = "update-ip"
 version = "0.1.0"
-description = "Add your description here"
+description = "Public IP change monitor with Bark notifications and macOS launchd support"
 readme = "README.md"
 authors = [
     { name = "lym", email = "liyumeng.1122@gmail.com" }
