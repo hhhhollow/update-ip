@@ -38,18 +38,12 @@ class BarkNotifier:
         url: Optional[str] = None,
         badge: Optional[int] = None,
     ) -> Tuple[bool, str]:
-        """
-        Send push notification via Bark.
-        Returns:
-            Tuple[bool, str]: (Success, status_message)
-        """
         if not self.is_configured():
             msg = "Bark key is not configured. Notification skipped."
             logger.warning(msg)
             return False, msg
 
         endpoint = f"{self.bark_server}/push"
-
         payload: Dict[str, Any] = {
             "device_key": self.bark_key,
             "title": title,
@@ -68,13 +62,12 @@ class BarkNotifier:
 
         if url:
             payload["url"] = url
-
         if badge is not None:
             payload["badge"] = badge
 
         try:
             async with httpx.AsyncClient(verify=True) as client:
-                logger.debug(f"Sending Bark push to {endpoint} with title: '{title}'")
+                logger.debug("Sending Bark push to %s with title: %r", endpoint, title)
                 response = await client.post(
                     endpoint,
                     json=payload,
@@ -82,10 +75,9 @@ class BarkNotifier:
                     headers={"Content-Type": "application/json; charset=utf-8"},
                 )
 
-                # Fallback to path key endpoint if /push returned 404
                 if response.status_code == 404:
                     fallback_endpoint = f"{self.bark_server}/{self.bark_key}"
-                    logger.debug(f"Fallback to {fallback_endpoint}")
+                    logger.debug("Bark /push endpoint unavailable; using legacy path endpoint on %s", self.bark_server)
                     response = await client.post(
                         fallback_endpoint,
                         json=payload,
@@ -100,13 +92,12 @@ class BarkNotifier:
                     code = resp_json.get("code")
                     message = resp_json.get("message", "OK")
                     if code == 200 or message == "success":
-                        logger.info(f"Bark notification sent successfully: {title}")
+                        logger.info("Bark notification sent successfully: %s", title)
                         return True, f"Success: {message}"
-                    else:
-                        logger.warning(f"Bark returned non-200 payload: {resp_json}")
-                        return False, f"Bark response error: code={code}, message={message}"
+                    logger.warning("Bark returned non-200 payload: %s", resp_json)
+                    return False, f"Bark response error: code={code}, message={message}"
                 except Exception:
-                    logger.info(f"Bark notification sent with HTTP {response.status_code}")
+                    logger.info("Bark notification sent with HTTP %s", response.status_code)
                     return True, f"HTTP {response.status_code}"
 
         except httpx.HTTPStatusError as e:
