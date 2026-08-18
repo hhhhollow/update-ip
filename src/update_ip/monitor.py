@@ -19,6 +19,7 @@ CHANNEL_LABELS = {
     "domestic": "国内公网 IP",
     "foreign": "国外出口 IP",
 }
+FAILURE_ALERT_THRESHOLD = 3
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -91,6 +92,114 @@ class IPMonitor:
             )
         return success
 
+    async def _notify_failure(
+        self,
+        scope: str,
+        failure_count: int,
+        error: str,
+        now_str: str,
+    ) -> bool:
+        if not self.notifier.is_configured():
+            return False
+
+        label = CHANNEL_LABELS[scope]
+        success, message = await self.notifier.send(
+            f"⚠️ {label} 连续查询失败",
+            (
+                f"已连续失败: {failure_count} 次\n"
+                f"最近错误: {error}\n"
+                f"时间: {now_str}"
+            ),
+        )
+        if not success:
+            logger.error(
+                "[red]%s failure alert delivery failed.[/red] Will retry on the next failed check. "
+                "Reason: %s",
+                label,
+                message,
+            )
+        return success
+
+    async def _notify_recovery(
+        self,
+        scope: str,
+        failure_count: int,
+        current_ip: str,
+        provider: str,
+        now_str: str,
+    ) -> bool:
+        if not self.notifier.is_configured():
+            return False
+
+        label = CHANNEL_LABELS[scope]
+        success, message = await self.notifier.send(
+            f"✅ {label} 查询已恢复",
+            (
+                f"此前连续失败: {failure_count} 次\n"
+                f"当前 IP: {current_ip}\n"
+                f"接口: {provider}\n"
+                f"时间: {now_str}"
+            ),
+        )
+        if not success:
+            logger.error(
+                "[red]%s recovery notification delivery failed.[/red] Will retry on the next "
+                "successful check. Reason: %s",
+                label,
+                message,
+            )
+        return success
+
+    async def _handle_check_failure(
+        self,
+        scope: str,
+        error: BaseException,
+        now_str: str,
+    ) -> None:
+        health = self.state.record_failure(scope, str(error))
+        failure_count = health["consecutive_failures"]
+        label = CHANNEL_LABELS[scope]
+
+        logger.warning(
+            "%s consecutive check failures: %s",
+            label,
+            failure_count,
+        )
+
+        if failure_count < FAILURE_ALERT_THRESHOLD or health["alert_active"]:
+            return
+
+        if not self.notifier.is_configured():
+            logger.warning(
+                "%s reached the failure alert threshold, but Bark is not configured.",
+                label,
+            )
+            return
+
+        if await self._notify_failure(scope, failure_count, str(error), now_str):
+            self.state.mark_failure_alerted(scope)
+
+    async def _handle_check_success(
+        self,
+        scope: str,
+        current_ip: str,
+        provider: str,
+        now_str: str,
+    ) -> None:
+        health = self.state.record_success(scope)
+        if not health["alert_active"]:
+            return
+
+        failure_count = health["outage_failure_count"] or health.get("previous_failures", 0)
+        if await self._notify_recovery(
+            scope,
+            failure_count,
+            current_ip,
+            provider,
+            now_str,
+        ):
+            self.state.clear_failure_alert(scope)
+
     async def _fetch_channels(
         self,
     ) -> Tuple[Dict[str, Tuple[str, str]], Dict[str, BaseException]]:
@@ -113,12 +222,6 @@ class IPMonitor:
                 )
             else:
                 successes[scope] = response
-
-        if not successes:
-            details = "; ".join(
-                f"{CHANNEL_LABELS[scope]}: {error}" for scope, error in errors.items()
-            )
-            raise RuntimeError(f"Both domestic and foreign IP checks failed: {details}")
 
         return successes, errors
 
@@ -185,6 +288,12 @@ class IPMonitor:
         for scope in ("domestic", "foreign"):
             if scope in fetched:
                 current_ip, provider = fetched[scope]
+                await self._handle_check_success(
+                    scope,
+                    current_ip,
+                    provider,
+                    now_str,
+                )
                 results[scope] = await self._process_channel(
                     scope,
                     current_ip,
@@ -193,6 +302,8 @@ class IPMonitor:
                     is_startup,
                 )
             else:
+                error = errors[scope]
+                await self._handle_check_failure(scope, error, now_str)
                 results[scope] = {
                     "ip": None,
                     "provider": None,
@@ -200,7 +311,7 @@ class IPMonitor:
                     "changed": False,
                     "initialized": False,
                     "state_advanced": False,
-                    "error": str(errors[scope]),
+                    "error": str(error),
                 }
 
         self.last_results = results
