@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     max_retries_per_provider: int = Field(default=2, ge=1, le=10)
     ip_version: Literal["4", "6", "any"] = Field(default="4")
 
+    # Domestic endpoints are expected to be routed DIRECT by common rule-based
+    # proxy clients. This reveals the ISP-facing public IP while overseas
+    # endpoints below reveal the proxy exit IP.
+    domestic_ip_providers: List[str] = Field(
+        default_factory=lambda: [
+            "https://4.ipw.cn",
+            "https://6.ipw.cn",
+            "https://cip.cc",
+            "http://myip.ipip.net",
+        ]
+    )
+
+    # Kept as IP_PROVIDERS for backwards compatibility. These are the
+    # overseas/foreign endpoints used to observe the proxy exit address.
     ip_providers: List[str] = Field(
         default_factory=lambda: [
             "https://api64.ipify.org?format=json",
@@ -36,7 +50,7 @@ class Settings(BaseSettings):
             "https://ident.me",
             "https://api.ipify.org",
             "https://ip.sb",
-            "https://cip.cc",
+            "https://httpbin.org/ip",
         ]
     )
 
