@@ -12,6 +12,8 @@ def test_state_manager_empty(tmp_path: Path):
     data = manager.load()
     assert data["last_ip"] is None
     assert data["history"] == []
+    assert data["health"]["domestic"]["consecutive_failures"] == 0
+    assert data["health"]["foreign"]["consecutive_failures"] == 0
 
 
 def test_state_manager_save_and_load(tmp_path: Path):
@@ -65,6 +67,50 @@ def test_legacy_last_ip_is_used_as_foreign_baseline(tmp_path: Path):
 
     assert manager.get_last_ip("foreign") == "198.51.100.5"
     assert manager.get_last_ip("domestic") is None
+    assert manager.get_health("foreign")["consecutive_failures"] == 0
+
+
+def test_failure_health_persists_across_process_like_instances(tmp_path: Path):
+    cache_file = tmp_path / "cache.json"
+
+    first = StateManager(cache_file)
+    assert first.record_failure("domestic", "timeout")["consecutive_failures"] == 1
+
+    second = StateManager(cache_file)
+    assert second.record_failure("domestic", "timeout")["consecutive_failures"] == 2
+
+    third = StateManager(cache_file)
+    health = third.record_failure("domestic", "timeout")
+    assert health["consecutive_failures"] == 3
+
+    alerted = third.mark_failure_alerted("domestic")
+    assert alerted["alert_active"] is True
+    assert alerted["outage_failure_count"] == 3
+
+    fourth = StateManager(cache_file)
+    recovered = fourth.record_success("domestic")
+    assert recovered["previous_failures"] == 3
+    assert recovered["consecutive_failures"] == 0
+    assert recovered["alert_active"] is True
+    assert recovered["outage_failure_count"] == 3
+
+    cleared = fourth.clear_failure_alert("domestic")
+    assert cleared["alert_active"] is False
+    assert cleared["outage_failure_count"] == 0
+
+
+def test_success_before_threshold_resets_failure_counter(tmp_path: Path):
+    cache_file = tmp_path / "cache.json"
+    manager = StateManager(cache_file)
+
+    manager.record_failure("foreign", "temporary error")
+    manager.record_failure("foreign", "temporary error")
+    health = manager.record_success("foreign")
+
+    assert health["previous_failures"] == 2
+    assert health["consecutive_failures"] == 0
+    assert health["alert_active"] is False
+    assert manager.get_health("foreign")["consecutive_failures"] == 0
 
 
 def test_state_manager_history_limit(tmp_path: Path):

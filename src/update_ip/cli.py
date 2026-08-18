@@ -126,7 +126,8 @@ def main() -> None:
         try:
             results = asyncio.run(monitor.check_once(is_startup=False))
             _print_once_results(results)
-            sys.exit(0)
+            all_failed = all(result.get("error") for result in results.values())
+            sys.exit(1 if all_failed else 0)
         except Exception as e:
             print(f"Error checking IP: {e}", file=sys.stderr)
             sys.exit(1)
