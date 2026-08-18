@@ -21,3 +21,9 @@ def test_rejects_invalid_ip_version():
 
 def test_default_ip_version_is_ipv4():
     assert Settings().ip_version == "4"
+
+
+def test_has_separate_domestic_and_foreign_providers():
+    settings = Settings()
+    assert "https://4.ipw.cn" in settings.domestic_ip_providers
+    assert "https://api.ipify.org" in settings.ip_providers
