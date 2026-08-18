@@ -18,7 +18,7 @@ from update_ip.service_helper import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="update-ip",
-        description="Public IP change monitor daemon with Bark push notifications",
+        description="Domestic/foreign public IP change monitor with Bark push notifications",
     )
     parser.add_argument(
         "command",
@@ -36,9 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="IP address family to monitor: 4, 6, or any (default: 4)",
     )
     parser.add_argument("-c", "--config", dest="config_file", help="Path to custom .env file")
-    parser.add_argument("--once", action="store_true", help="Run a single IP check and exit")
-    parser.add_argument("--test", action="store_true", help="Run provider diagnostics and test Bark")
-    parser.add_argument("--status", action="store_true", help="Show cached IP and recent history")
+    parser.add_argument("--once", action="store_true", help="Run one domestic + foreign IP check and exit")
+    parser.add_argument("--test", action="store_true", help="Run both provider diagnostics and test Bark")
+    parser.add_argument("--status", action="store_true", help="Show cached domestic/foreign IPs and history")
     parser.add_argument("--generate-launchd", action="store_true", help="Generate macOS launchd plist")
     parser.add_argument(
         "--launchd-interval",
@@ -50,6 +50,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-notify-on-start", action="store_false", dest="notify_on_start")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logs")
     return parser
+
+
+def _print_once_results(results: dict) -> None:
+    labels = {
+        "domestic": "Domestic IP",
+        "foreign": "Foreign IP",
+    }
+    for scope in ("domestic", "foreign"):
+        result = results[scope]
+        if result.get("error"):
+            print(f"{labels[scope]}: ERROR ({result['error']})")
+            continue
+
+        if result.get("initialized"):
+            status = "Initialized"
+        elif result.get("changed"):
+            status = "Changed"
+        else:
+            status = "Unchanged"
+        print(f"{labels[scope]}: {result['ip']} ({status})")
 
 
 def main() -> None:
@@ -104,11 +124,8 @@ def main() -> None:
 
     if args.once:
         try:
-            changed, cur_ip, prev_ip = asyncio.run(monitor.check_once(is_startup=False))
-            if prev_ip is None:
-                print(f"Current IP: {cur_ip} (Initialized)")
-            else:
-                print(f"Current IP: {cur_ip} (Changed: {changed})")
+            results = asyncio.run(monitor.check_once(is_startup=False))
+            _print_once_results(results)
             sys.exit(0)
         except Exception as e:
             print(f"Error checking IP: {e}", file=sys.stderr)

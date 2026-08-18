@@ -1,41 +1,78 @@
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import logging
 
 logger = logging.getLogger("update_ip.state")
+
+_VALID_SCOPES = {"domestic", "foreign"}
 
 
 class StateManager:
     def __init__(self, cache_file: Path):
         self.cache_file = Path(cache_file)
 
+    @staticmethod
+    def _empty_state() -> Dict[str, Any]:
+        return {
+            "last_ip": None,
+            "last_domestic_ip": None,
+            "last_foreign_ip": None,
+            "last_updated": None,
+            "last_domestic_updated": None,
+            "last_foreign_updated": None,
+            "history": [],
+        }
+
+    @staticmethod
+    def _validate_scope(scope: str) -> None:
+        if scope not in _VALID_SCOPES:
+            raise ValueError("scope must be 'domestic' or 'foreign'")
+
     def load(self) -> Dict[str, Any]:
         if not self.cache_file.exists():
-            return {"last_ip": None, "last_updated": None, "history": []}
+            return self._empty_state()
         try:
             with open(self.cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if not isinstance(data, dict):
-                    return {"last_ip": None, "last_updated": None, "history": []}
-                return data
+                    return self._empty_state()
+                merged = self._empty_state()
+                merged.update(data)
+                return merged
         except Exception as e:
             logger.warning(f"Failed to read cache file {self.cache_file}: {e}. Initializing empty state.")
-            return {"last_ip": None, "last_updated": None, "history": []}
+            return self._empty_state()
 
-    def get_last_ip(self) -> Optional[str]:
+    def get_last_ip(self, scope: str = "foreign") -> Optional[str]:
+        self._validate_scope(scope)
         data = self.load()
-        return data.get("last_ip")
+        if scope == "domestic":
+            return data.get("last_domestic_ip")
 
-    def save_ip(self, ip: str, provider: Optional[str] = None) -> None:
+        # Backwards compatibility: before dual-channel monitoring, last_ip was
+        # the only cached address. Treat it as the foreign/proxy-exit baseline.
+        return data.get("last_foreign_ip") or data.get("last_ip")
+
+    def save_ip(self, ip: str, provider: Optional[str] = None, scope: str = "foreign") -> None:
+        self._validate_scope(scope)
         data = self.load()
         now_iso = datetime.now(timezone.utc).astimezone().isoformat()
-        old_ip = data.get("last_ip")
 
-        data["last_ip"] = ip
+        key = f"last_{scope}_ip"
+        old_ip = data.get(key)
+        if scope == "foreign" and old_ip is None:
+            old_ip = data.get("last_ip")
+
+        data[key] = ip
+        data[f"last_{scope}_updated"] = now_iso
         data["last_updated"] = now_iso
+
+        # Preserve last_ip as a compatibility alias for the foreign/proxy IP.
+        if scope == "foreign":
+            data["last_ip"] = ip
 
         history: List[Dict[str, Any]] = data.get("history", [])
         if not isinstance(history, list):
@@ -46,8 +83,8 @@ class StateManager:
             "previous_ip": old_ip,
             "timestamp": now_iso,
             "provider": provider,
+            "scope": scope,
         })
-        # Keep the latest 50 history entries
         data["history"] = history[-50:]
 
         self._atomic_save(data)
