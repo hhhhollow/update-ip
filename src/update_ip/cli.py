@@ -5,7 +5,11 @@ import sys
 
 from update_ip.config import get_settings
 from update_ip.monitor import IPMonitor, setup_logging
-from update_ip.service_helper import generate_plist, print_service_instructions
+from update_ip.service_helper import (
+    DEFAULT_LAUNCHD_INTERVAL,
+    generate_plist,
+    print_service_instructions,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test", action="store_true", help="Run provider diagnostics and test Bark")
     parser.add_argument("--status", action="store_true", help="Show cached IP and recent history")
     parser.add_argument("--generate-launchd", action="store_true", help="Generate macOS launchd plist")
+    parser.add_argument(
+        "--launchd-interval",
+        type=int,
+        default=DEFAULT_LAUNCHD_INTERVAL,
+        help="macOS launchd schedule interval in seconds (default: 300)",
+    )
     parser.add_argument("--notify-on-start", action="store_true", default=None)
     parser.add_argument("--no-notify-on-start", action="store_false", dest="notify_on_start")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logs")
@@ -38,8 +48,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.generate_launchd:
-        plist_path = generate_plist()
-        print_service_instructions(plist_path)
+        if args.launchd_interval < 1:
+            parser.error("--launchd-interval must be at least 1 second")
+        plist_path = generate_plist(interval_seconds=args.launchd_interval)
+        print_service_instructions(plist_path, args.launchd_interval)
         sys.exit(0)
 
     settings = get_settings(env_file=args.config_file)

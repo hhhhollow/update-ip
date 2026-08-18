@@ -10,7 +10,7 @@
 - **可靠通知**：IP 变化后如果 Bark 推送失败，不会提前提交新 IP；下一轮继续重试。
 - **敏感信息保护**：Debug 日志不会输出 Bark device key。
 - **状态持久化**：`.ip_cache.json` 保存当前 IP 与最近历史。
-- **macOS launchd**：支持登录自启和崩溃拉起。
+- **macOS launchd**：默认每 5 分钟自动执行一次单次检查，无需常驻 Python 进程。
 - **自动化测试**：`pytest` + `respx`。
 
 ## 🚀 快速开始
@@ -56,12 +56,34 @@ uv run update-ip
 uv run update-ip --ip-version 6
 ```
 
-## macOS 后台自启
+## macOS 每 5 分钟自动检查
+
+生成 LaunchAgent；默认计划间隔为 **300 秒（5 分钟）**：
 
 ```bash
 uv run update-ip --generate-launchd
+```
+
+加载或重新加载任务：
+
+```bash
+launchctl unload -w ~/Library/LaunchAgents/com.update-ip.monitor.plist 2>/dev/null || true
 launchctl load -w ~/Library/LaunchAgents/com.update-ip.monitor.plist
 ```
+
+任务会在登录后立即检查一次，之后由 macOS 每 5 分钟执行一次：
+
+```bash
+uv run update-ip --once
+```
+
+如需修改为其他间隔，例如 10 分钟：
+
+```bash
+uv run update-ip --generate-launchd --launchd-interval 600
+```
+
+> `CHECK_INTERVAL` 用于 `uv run update-ip` 的常驻运行模式；launchd 定时模式使用 `--launchd-interval`。
 
 查看日志：
 
@@ -82,13 +104,14 @@ launchctl unload -w ~/Library/LaunchAgents/com.update-ip.monitor.plist
 | :--- | :--- | :--- |
 | `--key` | `-k` | 覆盖 Bark device key |
 | `--server` | `-s` | 自定义 Bark 服务器 |
-| `--interval` | `-i` | 检查间隔秒数，必须 >= 1 |
+| `--interval` | `-i` | 常驻模式检查间隔秒数，必须 >= 1 |
 | `--ip-version` | | `4` / `6` / `any` |
 | `--config` | `-c` | 指定自定义 `.env` |
 | `--once` | | 单次检查并退出 |
 | `--test` | | IP 源与 Bark 诊断 |
 | `--status` | | 查看缓存和历史 |
-| `--generate-launchd` | | 生成 macOS LaunchAgent |
+| `--generate-launchd` | | 生成 macOS LaunchAgent，默认每 5 分钟运行一次 |
+| `--launchd-interval` | | launchd 定时间隔秒数，默认 `300` |
 | `--no-notify-on-start` | | 启动时不发送就绪通知 |
 | `--verbose` | `-v` | Debug 日志 |
 
