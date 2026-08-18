@@ -1,10 +1,11 @@
-import os
 import shutil
-import sys
 from pathlib import Path
+
 from rich.console import Console
 
 console = Console()
+
+DEFAULT_LAUNCHD_INTERVAL = 300
 
 PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -21,11 +22,12 @@ PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
         <string>--directory</string>
         <string>{working_dir}</string>
         <string>update-ip</string>
+        <string>--once</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
-    <true/>
+    <key>StartInterval</key>
+    <integer>{interval_seconds}</integer>
     <key>StandardOutPath</key>
     <string>{log_dir}/stdout.log</string>
     <key>StandardErrorPath</key>
@@ -35,7 +37,13 @@ PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def generate_plist(target_path: Path | None = None) -> Path:
+def generate_plist(
+    target_path: Path | None = None,
+    interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL,
+) -> Path:
+    if interval_seconds < 1:
+        raise ValueError("launchd interval must be at least 1 second")
+
     working_dir = Path.cwd().resolve()
     log_dir = working_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -46,6 +54,7 @@ def generate_plist(target_path: Path | None = None) -> Path:
         working_dir=str(working_dir),
         uv_path=uv_path,
         log_dir=str(log_dir),
+        interval_seconds=interval_seconds,
     )
 
     if target_path is None:
@@ -58,11 +67,18 @@ def generate_plist(target_path: Path | None = None) -> Path:
     return target_path
 
 
-def print_service_instructions(plist_path: Path) -> None:
+def print_service_instructions(
+    plist_path: Path,
+    interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL,
+) -> None:
     console.print(f"[green]✓ macOS launchd plist generated at:[/green] {plist_path}")
-    console.print("\n[bold cyan]To start the background service immediately and on login:[/bold cyan]")
+    console.print(
+        f"[green]✓ update-ip will run once every {interval_seconds} seconds.[/green]"
+    )
+    console.print("\n[bold cyan]To load or reload the scheduled job:[/bold cyan]")
+    console.print(f"  launchctl unload -w {plist_path} 2>/dev/null || true")
     console.print(f"  launchctl load -w {plist_path}")
-    console.print("\n[bold yellow]To stop and disable the background service:[/bold yellow]")
+    console.print("\n[bold yellow]To stop and disable the scheduled job:[/bold yellow]")
     console.print(f"  launchctl unload -w {plist_path}")
     console.print("\n[bold]Log files location:[/bold]")
     console.print(f"  tail -f {Path.cwd().resolve()}/logs/stdout.log")
