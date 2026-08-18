@@ -9,6 +9,9 @@ from update_ip.service_helper import (
     DEFAULT_LAUNCHD_INTERVAL,
     generate_plist,
     print_service_instructions,
+    print_service_status,
+    start_service,
+    stop_service,
 )
 
 
@@ -16,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="update-ip",
         description="Public IP change monitor daemon with Bark push notifications",
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["start", "stop", "service-status"],
+        help="Control the macOS scheduled service",
     )
     parser.add_argument("-k", "--key", dest="bark_key", help="Bark device key (overrides .env)")
     parser.add_argument("-s", "--server", dest="bark_server", help="Bark server URL")
@@ -47,9 +56,20 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    if args.launchd_interval < 1:
+        parser.error("--launchd-interval must be at least 1 second")
+
+    if args.command == "start":
+        start_service(interval_seconds=args.launchd_interval)
+        sys.exit(0)
+    if args.command == "stop":
+        stop_service()
+        sys.exit(0)
+    if args.command == "service-status":
+        print_service_status()
+        sys.exit(0)
+
     if args.generate_launchd:
-        if args.launchd_interval < 1:
-            parser.error("--launchd-interval must be at least 1 second")
         plist_path = generate_plist(interval_seconds=args.launchd_interval)
         print_service_instructions(plist_path, args.launchd_interval)
         sys.exit(0)
