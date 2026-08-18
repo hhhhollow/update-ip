@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 from rich.console import Console
@@ -6,6 +7,7 @@ from rich.console import Console
 console = Console()
 
 DEFAULT_LAUNCHD_INTERVAL = 300
+SERVICE_LABEL = "com.update-ip.monitor"
 
 PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -37,6 +39,10 @@ PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def default_plist_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist"
+
+
 def generate_plist(
     target_path: Path | None = None,
     interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL,
@@ -58,13 +64,71 @@ def generate_plist(
     )
 
     if target_path is None:
-        launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
-        launch_agents_dir.mkdir(parents=True, exist_ok=True)
-        target_path = launch_agents_dir / "com.update-ip.monitor.plist"
+        target_path = default_plist_path()
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(content, encoding="utf-8")
     return target_path
+
+
+def start_service(interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL) -> Path:
+    plist_path = generate_plist(interval_seconds=interval_seconds)
+    subprocess.run(
+        ["launchctl", "unload", "-w", str(plist_path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    result = subprocess.run(
+        ["launchctl", "load", "-w", str(plist_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "launchctl load failed"
+        raise RuntimeError(message)
+    console.print(f"[green]✓ {SERVICE_LABEL} started (every {interval_seconds} seconds)[/green]")
+    return plist_path
+
+
+def stop_service() -> bool:
+    plist_path = default_plist_path()
+    if not plist_path.exists():
+        console.print(f"[yellow]• {SERVICE_LABEL} is already stopped[/yellow]")
+        return False
+
+    result = subprocess.run(
+        ["launchctl", "unload", "-w", str(plist_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        if "Could not find specified service" not in message:
+            raise RuntimeError(message or "launchctl unload failed")
+    console.print(f"[green]✓ {SERVICE_LABEL} stopped[/green]")
+    return True
+
+
+def service_is_running() -> bool:
+    result = subprocess.run(
+        ["launchctl", "list", SERVICE_LABEL],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def print_service_status() -> bool:
+    running = service_is_running()
+    if running:
+        console.print(f"[green]● {SERVICE_LABEL}: enabled[/green]")
+    else:
+        console.print(f"[yellow]○ {SERVICE_LABEL}: disabled[/yellow]")
+    return running
 
 
 def print_service_instructions(
@@ -75,11 +139,10 @@ def print_service_instructions(
     console.print(
         f"[green]✓ update-ip will run once every {interval_seconds} seconds.[/green]"
     )
-    console.print("\n[bold cyan]To load or reload the scheduled job:[/bold cyan]")
-    console.print(f"  launchctl unload -w {plist_path} 2>/dev/null || true")
-    console.print(f"  launchctl load -w {plist_path}")
-    console.print("\n[bold yellow]To stop and disable the scheduled job:[/bold yellow]")
-    console.print(f"  launchctl unload -w {plist_path}")
+    console.print("\n[bold cyan]Easy service commands:[/bold cyan]")
+    console.print("  uv run update-ip start")
+    console.print("  uv run update-ip stop")
+    console.print("  uv run update-ip service-status")
     console.print("\n[bold]Log files location:[/bold]")
     console.print(f"  tail -f {Path.cwd().resolve()}/logs/stdout.log")
     console.print(f"  tail -f {Path.cwd().resolve()}/logs/stderr.log\n")
