@@ -16,7 +16,7 @@
 - **连续失败告警**：任一通道连续 3 次查询失败后发送 Bark 告警；持续失败期间不会重复轰炸。
 - **恢复通知**：已经触发失败告警的通道重新查询成功后，会发送 Bark 恢复通知并清除故障状态。
 - **IPv4 / IPv6 控制**：默认只监控 IPv4，避免不同探测源返回不同地址族导致假变更。
-- **可靠通知**：IP 变化后如果 Bark 推送失败，不会提前提交新 IP；下一轮继续重试。
+- **可靠通知**：Bark 返回有效 JSON 且 `code=200` 才视为推送成功；异常响应或推送失败时保留旧 IP，下一轮继续重试。
 - **旧缓存兼容**：升级前的 `last_ip` 自动作为国外出口 IP 的历史基线。
 - **状态持久化**：`.ip_cache.json` 保存国内 / 国外 IP、最近历史以及连续失败状态，因此 launchd 每次重新启动 `--once` 也能累计失败次数。
 - **macOS launchd**：默认每 5 分钟自动执行一次单次检查，无需常驻 Python 进程。
@@ -121,6 +121,12 @@ uv run update-ip service-status
 
 ```bash
 uv run update-ip start --launchd-interval 600
+```
+
+服务也会保留显式指定的配置文件和监控参数，例如：
+
+```bash
+uv run update-ip start --config ./custom.env --ip-version 6
 ```
 
 > `CHECK_INTERVAL` 用于 `uv run update-ip` 的常驻运行模式；launchd 定时模式使用 `--launchd-interval`。

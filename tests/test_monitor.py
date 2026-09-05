@@ -60,7 +60,12 @@ async def test_foreign_change_is_tracked_independently(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_failed_bark_delivery_does_not_advance_changed_channel(tmp_path: Path):
+@pytest.mark.parametrize("status, body", [
+    (500, "temporary failure"),
+    (200, "<html>Proxy login required</html>"),
+    (200, "null"),
+])
+async def test_failed_bark_delivery_does_not_advance_changed_channel(tmp_path: Path, status, body):
     cache_file = tmp_path / "cache.json"
     monitor = IPMonitor(make_settings(cache_file))
     monitor.state.save_ip("100.64.0.10", scope="domestic")
@@ -69,7 +74,7 @@ async def test_failed_bark_delivery_does_not_advance_changed_channel(tmp_path: P
     with respx.mock(assert_all_called=True) as respx_mock:
         respx_mock.get(DOMESTIC_URL).respond(200, text="100.64.0.10")
         respx_mock.get(FOREIGN_URL).respond(200, text="203.0.113.21")
-        respx_mock.post(BARK_URL).respond(500, text="temporary failure")
+        respx_mock.post(BARK_URL).respond(status, text=body)
         results = await monitor.check_once(is_startup=False)
 
     assert results["foreign"]["changed"] is True

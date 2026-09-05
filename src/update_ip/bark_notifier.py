@@ -87,24 +87,22 @@ class BarkNotifier:
 
                 response.raise_for_status()
 
-                try:
-                    resp_json = response.json()
-                    code = resp_json.get("code")
-                    message = resp_json.get("message", "OK")
-                    if code == 200 or message == "success":
-                        logger.info("Bark notification sent successfully: %s", title)
-                        return True, f"Success: {message}"
-                    logger.warning("Bark returned non-200 payload: %s", resp_json)
-                    return False, f"Bark response error: code={code}, message={message}"
-                except Exception:
-                    logger.info("Bark notification sent with HTTP %s", response.status_code)
-                    return True, f"HTTP {response.status_code}"
+                resp_json = response.json()
+                if not isinstance(resp_json, dict):
+                    raise ValueError("Bark response must be a JSON object")
+                code = resp_json.get("code")
+                message = resp_json.get("message", "OK")
+                if code == 200:
+                    logger.info("Bark notification sent successfully: %s", title)
+                    return True, f"Success: {message}"
+                logger.warning("Bark returned non-200 payload: %s", resp_json)
+                return False, f"Bark response error: code={code}, message={message}"
 
         except httpx.HTTPStatusError as e:
             err_msg = f"Bark HTTP error {e.response.status_code}: {e.response.text}"
             logger.error(err_msg)
             return False, err_msg
-        except Exception as e:
+        except (httpx.RequestError, ValueError) as e:
             err_msg = f"Failed to send Bark notification: {e}"
             logger.error(err_msg)
             return False, err_msg

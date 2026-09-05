@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     )
 
 
-def get_settings(env_file: Optional[str] = None) -> Settings:
+def get_settings(env_file: Optional[str] = None, **overrides: object) -> Settings:
     if env_file:
-        return Settings(_env_file=env_file)
-    return Settings()
+        return Settings(_env_file=env_file, **overrides)
+    return Settings(**overrides)

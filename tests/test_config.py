@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from update_ip.config import Settings
+from update_ip.config import Settings, get_settings
 
 
 def test_rejects_zero_interval():
@@ -27,3 +27,18 @@ def test_has_separate_domestic_and_foreign_providers():
     settings = Settings()
     assert "https://4.ipw.cn" in settings.domestic_ip_providers
     assert "https://api.ipify.org" in settings.ip_providers
+
+
+@pytest.mark.parametrize("source", ["dotenv", "environment"])
+def test_overrides_apply_before_validation(tmp_path, monkeypatch, source):
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("NOTIFY_ON_START=false\n", encoding="utf-8")
+    if source == "dotenv":
+        env_file.write_text("CHECK_INTERVAL=0\nNOTIFY_ON_START=false\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("CHECK_INTERVAL", "0")
+
+    settings = get_settings(env_file=str(env_file), check_interval=60)
+
+    assert settings.check_interval == 60
+    assert settings.notify_on_start is False

@@ -7,7 +7,11 @@ from update_ip.ip_checker import IPChecker, extract_and_validate_ip
 def test_extract_and_validate_ip():
     assert extract_and_validate_ip("192.168.1.1") == "192.168.1.1"
     assert extract_and_validate_ip("IP: 123.45.67.89\nCountry: CN") == "123.45.67.89"
+    assert extract_and_validate_ip("IP:123.45.67.89") == "123.45.67.89"
+    assert extract_and_validate_ip("IP:2001:db8::1") == "2001:db8::1"
+    assert extract_and_validate_ip("IP: ::1") == "::1"
     assert extract_and_validate_ip("2001:0db8:85a3:0000:0000:8a2e:0370:7334") == "2001:db8:85a3::8a2e:370:7334"
+    assert extract_and_validate_ip("2001:db8:::1") is None
     assert extract_and_validate_ip("999.999.999.999") is None
 
 
@@ -50,6 +54,29 @@ async def test_ip_checker_json_response():
         ip, provider = await checker.get_current_ip()
         assert ip == "198.51.100.42"
         assert provider == "https://mock.ip/json"
+
+
+@pytest.mark.asyncio
+async def test_ip_checker_ignores_json_metadata_when_address_family_is_wrong():
+    checker = IPChecker(
+        providers=["https://mock.ip/json", "https://mock.ip/text"], max_retries_per_provider=1
+    )
+    with respx.mock(assert_all_called=True) as respx_mock:
+        respx_mock.get("https://mock.ip/json").respond(
+            200, json={"ip": "2001:db8::1", "server_ip": "198.51.100.42"}
+        )
+        respx_mock.get("https://mock.ip/text").respond(200, text="203.0.113.195")
+        assert await checker.get_current_ip() == ("203.0.113.195", "https://mock.ip/text")
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_list_does_not_use_default_providers():
+    checker = IPChecker(providers=[], max_retries_per_provider=1)
+    with respx.mock(assert_all_called=False) as respx_mock:
+        respx_mock.get(url__regex=".*").respond(200, text="203.0.113.195")
+        with pytest.raises(RuntimeError, match="All IP providers failed"):
+            await checker.get_current_ip()
+        assert respx_mock.calls.call_count == 0
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,25 @@ def test_generate_plist_supports_custom_interval(tmp_path, monkeypatch):
     assert plist["StartInterval"] == 600
 
 
+def test_generate_plist_preserves_special_characters_in_paths(tmp_path, monkeypatch):
+    working_dir = tmp_path / "项目 & <monitor>"
+    working_dir.mkdir()
+    monkeypatch.chdir(working_dir)
+    uv_path = str(tmp_path / "tools & <bin>" / "uv")
+    monkeypatch.setattr(service_helper.shutil, "which", lambda command: uv_path)
+    target = tmp_path / "com.update-ip.monitor.plist"
+
+    generate_plist(target)
+
+    plist = plistlib.loads(target.read_bytes())
+    assert plist["WorkingDirectory"] == str(working_dir.resolve())
+    assert plist["ProgramArguments"][:4] == [
+        uv_path, "run", "--directory", str(working_dir.resolve())
+    ]
+    assert plist["StandardOutPath"] == str(working_dir.resolve() / "logs" / "stdout.log")
+    assert plist["StandardErrorPath"] == str(working_dir.resolve() / "logs" / "stderr.log")
+
+
 def test_generate_plist_rejects_non_positive_interval(tmp_path):
     target = tmp_path / "com.update-ip.monitor.plist"
 
@@ -37,7 +56,10 @@ def test_generate_plist_rejects_non_positive_interval(tmp_path):
         generate_plist(target, interval_seconds=0)
 
 
-def test_start_service_reloads_launch_agent(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "monitor_args", [None, ["--config", "/tmp/custom config.env", "--ip-version", "6"]]
+)
+def test_start_service_reloads_launch_agent(tmp_path, monkeypatch, monitor_args):
     monkeypatch.chdir(tmp_path)
     plist_path = tmp_path / "Library" / "LaunchAgents" / "com.update-ip.monitor.plist"
     monkeypatch.setattr(service_helper, "default_plist_path", lambda: plist_path)
@@ -50,11 +72,13 @@ def test_start_service_reloads_launch_agent(tmp_path, monkeypatch):
 
     monkeypatch.setattr(service_helper.subprocess, "run", fake_run)
 
-    service_helper.start_service()
+    service_helper.start_service(monitor_args=monitor_args)
 
     assert calls[0][:3] == ["launchctl", "unload", "-w"]
     assert calls[1][:3] == ["launchctl", "load", "-w"]
     assert plist_path.exists()
+    plist = plistlib.loads(plist_path.read_bytes())
+    assert plist["ProgramArguments"][4:] == ["update-ip", "--once", *(monitor_args or [])]
 
 
 def test_stop_service_unloads_launch_agent(tmp_path, monkeypatch):

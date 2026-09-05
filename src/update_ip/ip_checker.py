@@ -9,7 +9,7 @@ import httpx
 logger = logging.getLogger("update_ip.checker")
 
 IPVersion = Literal["4", "6", "any"]
-IP_CANDIDATE_REGEX = re.compile(r"[0-9A-Fa-f:.]+")
+IP_CANDIDATE_REGEX = re.compile(r"(?:[0-9A-Fa-f]|::)[0-9A-Fa-f:.]*")
 
 
 def _matches_version(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, version: IPVersion) -> bool:
@@ -45,7 +45,7 @@ class IPChecker:
         if ip_version not in ("4", "6", "any"):
             raise ValueError("ip_version must be '4', '6', or 'any'")
 
-        self.providers = providers or [
+        self.providers = providers if providers is not None else [
             "https://api64.ipify.org?format=json",
             "https://icanhazip.com",
             "https://ifconfig.me/ip",
@@ -75,10 +75,9 @@ class IPChecker:
             try:
                 data = response.json()
                 if isinstance(data, dict):
-                    for key in ("ip", "origin", "query", "addr"):
-                        value = data.get(key)
-                        if isinstance(value, str) and (ip := extract_and_validate_ip(value, self.ip_version)):
-                            return ip
+                    values = [data[key] for key in ("ip", "origin", "query", "addr") if isinstance(data.get(key), str)]
+                    if values:
+                        raw_text = " ".join(values)
             except ValueError:
                 pass
 

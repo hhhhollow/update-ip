@@ -1,3 +1,4 @@
+import plistlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,35 +10,6 @@ console = Console()
 DEFAULT_LAUNCHD_INTERVAL = 300
 SERVICE_LABEL = "com.update-ip.monitor"
 
-PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.update-ip.monitor</string>
-    <key>WorkingDirectory</key>
-    <string>{working_dir}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{uv_path}</string>
-        <string>run</string>
-        <string>--directory</string>
-        <string>{working_dir}</string>
-        <string>update-ip</string>
-        <string>--once</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StartInterval</key>
-    <integer>{interval_seconds}</integer>
-    <key>StandardOutPath</key>
-    <string>{log_dir}/stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>{log_dir}/stderr.log</string>
-</dict>
-</plist>
-"""
-
 
 def default_plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist"
@@ -46,6 +18,7 @@ def default_plist_path() -> Path:
 def generate_plist(
     target_path: Path | None = None,
     interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL,
+    monitor_args: list[str] | None = None,
 ) -> Path:
     if interval_seconds < 1:
         raise ValueError("launchd interval must be at least 1 second")
@@ -56,23 +29,32 @@ def generate_plist(
 
     uv_path = shutil.which("uv") or "uv"
 
-    content = PLIST_TEMPLATE.format(
-        working_dir=str(working_dir),
-        uv_path=uv_path,
-        log_dir=str(log_dir),
-        interval_seconds=interval_seconds,
-    )
+    content = {
+        "Label": SERVICE_LABEL,
+        "WorkingDirectory": str(working_dir),
+        "ProgramArguments": [
+            uv_path, "run", "--directory", str(working_dir), "update-ip", "--once",
+            *(monitor_args or []),
+        ],
+        "RunAtLoad": True,
+        "StartInterval": interval_seconds,
+        "StandardOutPath": str(log_dir / "stdout.log"),
+        "StandardErrorPath": str(log_dir / "stderr.log"),
+    }
 
     if target_path is None:
         target_path = default_plist_path()
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(content, encoding="utf-8")
+    target_path.write_bytes(plistlib.dumps(content))
     return target_path
 
 
-def start_service(interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL) -> Path:
-    plist_path = generate_plist(interval_seconds=interval_seconds)
+def start_service(
+    interval_seconds: int = DEFAULT_LAUNCHD_INTERVAL,
+    monitor_args: list[str] | None = None,
+) -> Path:
+    plist_path = generate_plist(interval_seconds=interval_seconds, monitor_args=monitor_args)
     subprocess.run(
         ["launchctl", "unload", "-w", str(plist_path)],
         stdout=subprocess.DEVNULL,

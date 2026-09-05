@@ -72,3 +72,21 @@ async def test_bark_server_error():
         success, msg = await notifier.send("Title", "Body")
         assert not success
         assert "500" in msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    "<html>Proxy login required</html>",
+    "null",
+    "[]",
+    "{}",
+    '{"code": 500, "message": "success"}',
+])
+async def test_bark_rejects_invalid_success_response(body):
+    notifier = BarkNotifier(bark_key="my_key")
+    with respx.mock(assert_all_called=True) as respx_mock:
+        respx_mock.post("https://api.day.app/push").respond(200, text=body)
+        success, msg = await notifier.send("Title", "Body")
+
+    assert not success
+    assert msg

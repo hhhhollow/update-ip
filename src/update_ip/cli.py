@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from update_ip.config import get_settings
 from update_ip.monitor import IPMonitor, setup_logging
@@ -79,9 +80,6 @@ def main() -> None:
     if args.launchd_interval < 1:
         parser.error("--launchd-interval must be at least 1 second")
 
-    if args.command == "start":
-        start_service(interval_seconds=args.launchd_interval)
-        sys.exit(0)
     if args.command == "stop":
         stop_service()
         sys.exit(0)
@@ -89,27 +87,41 @@ def main() -> None:
         print_service_status()
         sys.exit(0)
 
+    overrides = {}
+    monitor_args = []
+    if args.config_file:
+        args.config_file = str(Path(args.config_file).expanduser().resolve())
+        monitor_args.extend(["--config", args.config_file])
+    for field, option in (
+        ("bark_key", "--key"),
+        ("bark_server", "--server"),
+        ("check_interval", "--interval"),
+        ("ip_version", "--ip-version"),
+    ):
+        value = getattr(args, field)
+        if value is not None:
+            overrides[field] = value
+            monitor_args.extend([option, str(value)])
+    if args.notify_on_start is not None:
+        overrides["notify_on_start"] = args.notify_on_start
+        monitor_args.append(
+            "--notify-on-start" if args.notify_on_start else "--no-notify-on-start"
+        )
+    if args.verbose:
+        monitor_args.append("--verbose")
+
+    if args.command == "start":
+        start_service(interval_seconds=args.launchd_interval, monitor_args=monitor_args)
+        sys.exit(0)
+
     if args.generate_launchd:
-        plist_path = generate_plist(interval_seconds=args.launchd_interval)
+        plist_path = generate_plist(
+            interval_seconds=args.launchd_interval, monitor_args=monitor_args
+        )
         print_service_instructions(plist_path, args.launchd_interval)
         sys.exit(0)
 
-    settings = get_settings(env_file=args.config_file)
-
-    overrides = {}
-    if args.bark_key:
-        overrides["bark_key"] = args.bark_key
-    if args.bark_server:
-        overrides["bark_server"] = args.bark_server
-    if args.check_interval is not None:
-        overrides["check_interval"] = args.check_interval
-    if args.ip_version:
-        overrides["ip_version"] = args.ip_version
-    if args.notify_on_start is not None:
-        overrides["notify_on_start"] = args.notify_on_start
-    if overrides:
-        settings = settings.model_copy(update=overrides)
-        settings = type(settings).model_validate(settings.model_dump())
+    settings = get_settings(env_file=args.config_file, **overrides)
 
     setup_logging(logging.DEBUG if args.verbose else logging.INFO)
     monitor = IPMonitor(settings)
